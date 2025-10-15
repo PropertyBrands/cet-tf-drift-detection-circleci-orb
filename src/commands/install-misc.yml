@@ -1,0 +1,7 @@
+description: Install misc deps (bind-tools, jq)
+steps:
+  - run:
+      name: Install miscellaneous dependencies
+      command: |
+        set -e
+        apk add --no-cache bind-tools jq

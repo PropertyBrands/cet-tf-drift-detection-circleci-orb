@@ -1,0 +1,20 @@
+description: Dry-run drift-detection usage example
+usage:
+  version: 2.1
+  orbs:
+    cet-tf: cet-tf/terragrunt@dev:first
+  workflows:
+    demo:
+      jobs:
+        - cet-tf/drift-detection:
+            name: terragrunt-plan-us-east-1-development
+            account_type: dev
+            region: us-east-1
+            environment: dev
+            account_id: "12345678912"
+            tg_queue_exclude_dirs: "api-gateway"
+            drift_email_to: "your-receipient-dl@domain.com"
+            drift_email_from: "your-ses@domain.com"
+            ses_region: "us-east-2"
+            dry_run: true
+            context: any-context
