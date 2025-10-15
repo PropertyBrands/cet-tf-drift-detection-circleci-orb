@@ -1,0 +1,58 @@
+description: "Run terragrunt run-all plan and send SES email on drift/failure"
+circleci_ip_ranges: true
+parameters:
+  # Deployment details
+  region:
+    type: string
+  account_type:
+    type: string
+  environment:
+    type: string
+  account_id:
+    type: string
+  # Repo structure + AWS role name
+  deployments_root:
+    type: string
+    default: "deployments"
+  role_name:
+    type: string
+  # Container image
+  terragrunt_image:
+    type: string
+    default: "alpine/terragrunt:1.12.2"
+  # Terragrunt exclusions
+  tg_queue_exclude_dirs:
+    description: "Comma-separated list of dirs to exclude from run-all"
+    type: string
+    default: ""
+  # Email / SES
+  drift_email_to:
+    type: string
+  drift_email_from:
+    type: string
+  drift_email_from_name:
+    type: string
+    default: "Terraform Drift Detection"
+  ses_region:
+    type: string
+  # DRY RUN capability to test parameter/orb
+  dry_run:
+    type: boolean
+    default: true
+executor:
+  name: terragrunt
+  image: << parameters.terragrunt_image >>
+steps:
+  - checkout
+  - aws-cli/setup:
+      role_arn: arn:aws:iam::<< parameters.account_id >>:role/<< parameters.role_name >>
+      region: << parameters.region >>
+  - install_sops
+  - install_misc
+  - run:
+      name: Dry run – print all inputs
+      command: <<include(scripts/print_inputs.sh)>>
+  - run:
+      name: Dry run gate
+      command: <<include(scripts/dry_run_gate.sh)>>
+  # Real Plan/Drift detection + SES notification upon dry-run false

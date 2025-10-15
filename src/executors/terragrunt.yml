@@ -1,0 +1,7 @@
+description: Terragrunt Docker executor
+parameters:
+  image:
+    type: string
+    default: "alpine/terragrunt:1.12.2"
+docker:
+  - image: << parameters.image >>
