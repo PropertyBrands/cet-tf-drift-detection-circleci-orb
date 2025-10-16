@@ -50,9 +50,18 @@ steps:
   - install_sops
   - install_misc
   - run:
-      name: Dry run – print all inputs
-      command: <<include(scripts/print_inputs.sh)>>
-  - run:
-      name: Dry run gate
-      command: <<include(scripts/dry_run_gate.sh)>>
-  # Real Plan/Drift detection + SES notification upon dry-run false
+      name: Run Terragrunt plan and email on drift (<< parameters.region >>/<< parameters.environment >>)
+      working_directory: << parameters.deployments_root >>/<< parameters.account_type >>/<< parameters.region >>/<< parameters.environment >>
+      environment:
+        # ENV Vars
+        REGION: << parameters.region >>
+        ENVIRONMENT: << parameters.environment >>
+        ACCOUNT_TYPE: << parameters.account_type >>
+        ACCOUNT_ID: << parameters.account_id >>
+        TG_QUEUE_EXCLUDE_DIRS: << parameters.tg_queue_exclude_dirs >>
+        # Email / SES Vars
+        DRIFT_EMAIL_TO: << parameters.drift_email_to >>
+        DRIFT_EMAIL_FROM: << parameters.drift_email_from >>
+        DRIFT_EMAIL_FROM_NAME: << parameters.drift_email_from_name >>
+        SES_REGION: << parameters.ses_region >>
+      command: <<include(scripts/run_drift_detection.sh)>>
