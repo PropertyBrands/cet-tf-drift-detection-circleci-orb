@@ -1,4 +1,5 @@
 description: Install SOPS
 steps:
   - run:
+      name: Install SOPS
       command: <<include(scripts/install_sops.sh)>>
