@@ -1,9 +1,4 @@
 description: Install SOPS
-parameters:
-  version:
-    type: string
-    default: "v3.10.2"
 steps:
   - run:
-      name: Install SOPS (<< parameters.version >>)
       command: <<include(scripts/install_sops.sh)>>
