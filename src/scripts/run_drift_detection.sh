@@ -48,15 +48,15 @@ send_mail() {
 
 case "$TG_STATUS" in
   2)
-    SUBJECT="[TF] Drift detected in ${ALIAS} - << parameters.account_type >> account (environment: << parameters.environment >>)"
+    SUBJECT="[TF] Drift detected in ${ALIAS} account (environment: ${ENVIRONMENT})"
     BODY=$(printf '%s\nAWS Account Name: %s\nAWS Account ID: %s\nAWS Region: %s\nAccount Type: %s\nEnvironment: %s\nPipeline: %s\n' \
-    "Drift detected:" \
-    "$ALIAS" \
-    "<< parameters.account_id >>" \
-    "<< parameters.region >>" \
-    "<< parameters.account_type >>" \
-    "<< parameters.environment >>" \
-    "${CIRCLE_BUILD_URL}")
+      "Drift detected:" \
+      "$ALIAS" \
+      "$ACCOUNT_ID" \
+      "$REGION" \
+      "$ACCOUNT_TYPE" \
+      "$ENVIRONMENT" \
+      "${CIRCLE_BUILD_URL:-N/A}")
     send_mail "$SUBJECT" "$BODY"
     echo "Drift detected in the Terragrunt plan. SES notification sent."
     exit 2
@@ -65,15 +65,15 @@ case "$TG_STATUS" in
     echo "No drift. Plan OK."
     ;;
   *)
-    SUBJECT="[TF] Terragrunt Plan failed in ${ALIAS} - << parameters.account_type >> account (environment: << parameters.environment >>)"
+    SUBJECT="[TF] Terragrunt Plan failed in ${ALIAS} account (environment: ${ENVIRONMENT})"
     BODY=$(printf 'Terragrunt plan failed (exit %s)\nAWS Account Name: %s\nAWS Account ID: %s\nAWS Region: %s\nAccount Type: %s\nEnvironment: %s\nPipeline: %s\n' \
-    "$TG_STATUS" \
-    "$BRAND" \
-    "<< parameters.account_id >>" \
-    "<< parameters.region >>" \
-    "<< parameters.account_type >>" \
-    "<< parameters.environment >>" \
-    "${CIRCLE_BUILD_URL}")
+      "$TG_STATUS" \
+      "$ALIAS" \
+      "$ACCOUNT_ID" \
+      "$REGION" \
+      "$ACCOUNT_TYPE" \
+      "$ENVIRONMENT" \
+      "${CIRCLE_BUILD_URL:-N/A}")
     send_mail "$SUBJECT" "$BODY"
     echo "Terragrunt Plan failed. SES notification sent."
     exit "$TG_STATUS"
