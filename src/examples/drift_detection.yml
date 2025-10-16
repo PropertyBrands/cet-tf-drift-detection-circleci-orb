@@ -2,7 +2,7 @@ description: Dry-run drift-detection usage example
 usage:
   version: 2.1
   orbs:
-    tf-drift-detection: iiq/tf-drift-detection@0.2.0
+    tf-drift-detection: iiq/tf-drift-detection@1.0.0
   workflows:
     demo:
       jobs:
