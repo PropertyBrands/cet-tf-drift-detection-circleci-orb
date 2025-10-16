@@ -2,11 +2,11 @@ description: Dry-run drift-detection usage example
 usage:
   version: 2.1
   orbs:
-    tf-drift-detection: iiq/tf-drift-detection@0.1.0
+    tf-drift-detection: iiq/tf-drift-detection@0.2.0
   workflows:
     demo:
       jobs:
-        - cet-tf/drift_detection:
+        - tf-drift-detection/drift_detection:
             name: terragrunt-plan-us-east-1-development
             account_type: dev
             region: us-east-1
