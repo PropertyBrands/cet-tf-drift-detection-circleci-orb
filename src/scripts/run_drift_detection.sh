@@ -7,7 +7,7 @@ if [ -n "${TG_QUEUE_EXCLUDE_DIRS:-}" ]; then
   IFS=',' read -r -a _dirs <<< "$TG_QUEUE_EXCLUDE_DIRS"
   for d in "${_dirs[@]}"; do
     d="$(echo "$d" | xargs)"
-    [ -n "$d" ] && EXTRA_ARGS+=( --terragrunt-exclude-dir "$d" )
+    [ -n "$d" ] && EXTRA_ARGS+=( --queue-exclude-dir "$d" )
   done
 fi
 
@@ -22,7 +22,7 @@ fi
 
 # Run tg plan and capture the exit code
 set +e
-terragrunt run --all -- plan -detailed-exitcode --terragrunt-non-interactive "${EXTRA_ARGS[@]}"
+terragrunt run --all --non-interactive "${EXTRA_ARGS[@]}" -- plan -detailed-exitcode
 TG_STATUS=$?
 set -e
 
