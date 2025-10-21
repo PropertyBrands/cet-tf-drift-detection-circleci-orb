@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-apk add --no-cache jq >/dev/null || true
 
 # Build exclude flag for run-all
 EXTRA_ARGS=()
@@ -15,8 +14,11 @@ fi
 # Fetch the account name (alias) and if missing use account_id
 ACCOUNT_ALIAS=$(aws iam list-account-aliases --query 'AccountAliases[0]' --output text 2>/dev/null || true)
 # Convert to empty string if None is returned
-[ "$ACCOUNT_ALIAS" = "None" ] && ACCOUNT_ALIAS=""
-ALIAS="${ACCOUNT_ALIAS:-<< parameters.account_id >>}"
+if [ "$ACCOUNT_ALIAS" = "None" ] || [ -z "$ACCOUNT_ALIAS" ]; then
+  ALIAS="$ACCOUNT_ID"
+else
+  ALIAS="$ACCOUNT_ALIAS"
+fi
 
 # Run tg plan and capture the exit code
 set +e
@@ -65,8 +67,8 @@ case "$TG_STATUS" in
     echo "No drift. Plan OK."
     ;;
   *)
-    SUBJECT="[TF] Terragrunt Plan failed in ${ALIAS} account (environment: ${ENVIRONMENT})"
-    BODY=$(printf 'Terragrunt plan failed (exit %s)\nAWS Account Name: %s\nAWS Account ID: %s\nAWS Region: %s\nAccount Type: %s\nEnvironment: %s\nPipeline: %s\n' \
+    SUBJECT="[TF] Terragrunt plan failed in ${ALIAS} account (environment: ${ENVIRONMENT})"
+    BODY=$(printf 'Terragrunt plan failed (exit code %s)\nAWS Account Name: %s\nAWS Account ID: %s\nAWS Region: %s\nAccount Type: %s\nEnvironment: %s\nPipeline: %s\n' \
       "$TG_STATUS" \
       "$ALIAS" \
       "$ACCOUNT_ID" \

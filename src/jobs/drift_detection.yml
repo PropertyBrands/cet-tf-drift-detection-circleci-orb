@@ -1,4 +1,5 @@
 description: "Run terragrunt run-all plan and send SES email on drift/failure"
+# Use CircleCI IP ranges so EKS public endpoint allowlists can authorize the runner's egress IPs.
 circleci_ip_ranges: true
 parameters:
   # Deployment details
@@ -19,7 +20,7 @@ parameters:
   # Container image
   terragrunt_image:
     type: string
-    default: "alpine/terragrunt:1.12.2"
+    default: "alpine/terragrunt:1.13.4"
   # Terragrunt exclusions
   tg_queue_exclude_dirs:
     description: "Comma-separated list of dirs to exclude from run-all"
@@ -35,10 +36,6 @@ parameters:
     default: "Terraform Drift Detection"
   ses_region:
     type: string
-  # DRY RUN capability to test parameter/orb
-  dry_run:
-    type: boolean
-    default: true
 executor:
   name: terragrunt
   image: << parameters.terragrunt_image >>
