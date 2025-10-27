@@ -44,6 +44,7 @@ steps:
   - aws-cli/setup:
       role_arn: arn:aws:iam::<< parameters.account_id >>:role/<< parameters.role_name >>
       region: << parameters.region >>
+  - install_python
   - install_sops
   - install_misc
   - run:

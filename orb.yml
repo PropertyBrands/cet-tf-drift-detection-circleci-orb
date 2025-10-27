@@ -1,0 +1,213 @@
+version: 2.1
+description: |
+    Terragrunt run-all plan with drift email via SES. Includes SOPS, CircleCI IP ranges, and flexible exclude-dir handling.
+display:
+    home_url: https://github.com/PropertyBrands
+    source_url: https://github.com/PropertyBrands/cet-tf-drift-detection-circleci-orb
+orbs:
+    aws-cli: circleci/aws-cli@5.4.0
+commands:
+    install_misc:
+        description: Install misc deps (bind-tools, jq)
+        steps:
+            - run:
+                command: |
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    apk add --no-cache bind-tools jq
+                name: Install miscellaneous dependencies
+    install_python:
+        description: Install Python
+        steps:
+            - run:
+                command: |
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    apk add --no-cache bind-tools jq
+                name: Install Python
+    install_sops:
+        description: Install SOPS
+        steps:
+            - run:
+                command: |
+                    #!/usr/bin/env bash
+                    set -e
+                    apk add --no-cache curl
+                    curl -sSLo /usr/local/bin/sops \
+                      https://github.com/getsops/sops/releases/download/v3.10.2.linux.amd64
+                    chmod +x /usr/local/bin/sops
+                name: Install SOPS
+executors:
+    terragrunt:
+        description: Terragrunt Docker executor
+        docker:
+            - image: << parameters.image >>
+        parameters:
+            image:
+                default: alpine/terragrunt:1.12.2
+                type: string
+jobs:
+    drift_detection:
+        circleci_ip_ranges: true
+        description: Run terragrunt run-all plan and send SES email on drift/failure
+        executor:
+            image: << parameters.terragrunt_image >>
+            name: terragrunt
+        parameters:
+            account_id:
+                type: string
+            account_type:
+                type: string
+            deployments_root:
+                default: deployments
+                type: string
+            drift_email_from:
+                type: string
+            drift_email_from_name:
+                default: Terraform Drift Detection
+                type: string
+            drift_email_to:
+                type: string
+            environment:
+                type: string
+            region:
+                type: string
+            role_name:
+                type: string
+            ses_region:
+                type: string
+            terragrunt_image:
+                default: alpine/terragrunt:1.13.4
+                type: string
+            tg_queue_exclude_dirs:
+                default: ""
+                description: Comma-separated list of dirs to exclude from run-all
+                type: string
+        steps:
+            - checkout
+            - aws-cli/setup:
+                region: << parameters.region >>
+                role_arn: arn:aws:iam::<< parameters.account_id >>:role/<< parameters.role_name >>
+            - install_python
+            - install_sops
+            - install_misc
+            - run:
+                command: |
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+
+                    # Build exclude flag for run-all
+                    EXTRA_ARGS=()
+                    if [ -n "${TG_QUEUE_EXCLUDE_DIRS:-}" ]; then
+                      IFS=',' read -r -a _dirs \<<< "$TG_QUEUE_EXCLUDE_DIRS"
+                      for d in "${_dirs[@]}"; do
+                        d="$(echo "$d" | xargs)"
+                        [ -n "$d" ] && EXTRA_ARGS+=( --queue-exclude-dir "$d" )
+                      done
+                    fi
+
+                    # Fetch the account name (alias) and if missing use account_id
+                    ACCOUNT_ALIAS=$(aws iam list-account-aliases --query 'AccountAliases[0]' --output text 2>/dev/null || true)
+                    # Convert to empty string if None is returned
+                    if [ "$ACCOUNT_ALIAS" = "None" ] || [ -z "$ACCOUNT_ALIAS" ]; then
+                      ALIAS="$ACCOUNT_ID"
+                    else
+                      ALIAS="$ACCOUNT_ALIAS"
+                    fi
+
+                    # Run tg plan and capture the exit code
+                    set +e
+                    terragrunt run --all --non-interactive "${EXTRA_ARGS[@]}" -- plan -detailed-exitcode
+                    TG_STATUS=$?
+                    set -e
+
+                    # Helper to send a minimal SES email with jq
+                    send_mail() {
+                        subj="$1"
+                        body="$2"
+                        FROM_COMPOSED="${DRIFT_EMAIL_FROM_NAME} <${DRIFT_EMAIL_FROM}>"
+
+                        jq -n --arg s "$subj" --arg b "$body" \
+                            '{Subject:{Data:$s}, Body:{Text:{Data:$b}}}' > /tmp/message.json
+
+                        # Ensure we don't sign with assumed-role tokens
+                        unset AWS_SESSION_TOKEN AWS_SECURITY_TOKEN AWS_PROFILE AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE
+
+                        AWS_ACCESS_KEY_ID="$SES_LOGIN" \
+                        AWS_SECRET_ACCESS_KEY="$SES_PASSWORD" \
+                        AWS_DEFAULT_REGION="$SES_REGION" \
+                        aws ses send-email \
+                            --from "$FROM_COMPOSED" \
+                            --destination "ToAddresses=$DRIFT_EMAIL_TO" \
+                            --message file:///tmp/message.json \
+                        || echo "WARN: SES send failed"
+                    }
+
+                    case "$TG_STATUS" in
+                      2)
+                        SUBJECT="[TF] Drift detected in ${ALIAS} account (environment: ${ENVIRONMENT})"
+                        BODY=$(printf '%s\nAWS Account Name: %s\nAWS Account ID: %s\nAWS Region: %s\nAccount Type: %s\nEnvironment: %s\nPipeline: %s\n' \
+                          "Drift detected:" \
+                          "$ALIAS" \
+                          "$ACCOUNT_ID" \
+                          "$REGION" \
+                          "$ACCOUNT_TYPE" \
+                          "$ENVIRONMENT" \
+                          "${CIRCLE_BUILD_URL:-N/A}")
+                        send_mail "$SUBJECT" "$BODY"
+                        echo "Drift detected in the Terragrunt plan. SES notification sent."
+                        exit 2
+                        ;;
+                      0)
+                        echo "No drift. Plan OK."
+                        ;;
+                      *)
+                        SUBJECT="[TF] Terragrunt plan failed in ${ALIAS} account (environment: ${ENVIRONMENT})"
+                        BODY=$(printf 'Terragrunt plan failed (exit code %s)\nAWS Account Name: %s\nAWS Account ID: %s\nAWS Region: %s\nAccount Type: %s\nEnvironment: %s\nPipeline: %s\n' \
+                          "$TG_STATUS" \
+                          "$ALIAS" \
+                          "$ACCOUNT_ID" \
+                          "$REGION" \
+                          "$ACCOUNT_TYPE" \
+                          "$ENVIRONMENT" \
+                          "${CIRCLE_BUILD_URL:-N/A}")
+                        send_mail "$SUBJECT" "$BODY"
+                        echo "Terragrunt Plan failed. SES notification sent."
+                        exit "$TG_STATUS"
+                        ;;
+                    esac
+                environment:
+                    ACCOUNT_ID: << parameters.account_id >>
+                    ACCOUNT_TYPE: << parameters.account_type >>
+                    DRIFT_EMAIL_FROM: << parameters.drift_email_from >>
+                    DRIFT_EMAIL_FROM_NAME: << parameters.drift_email_from_name >>
+                    DRIFT_EMAIL_TO: << parameters.drift_email_to >>
+                    ENVIRONMENT: << parameters.environment >>
+                    REGION: << parameters.region >>
+                    SES_REGION: << parameters.ses_region >>
+                    TG_QUEUE_EXCLUDE_DIRS: << parameters.tg_queue_exclude_dirs >>
+                name: Run Terragrunt plan and email on drift (<< parameters.region >>/<< parameters.environment >>)
+                working_directory: << parameters.deployments_root >>/<< parameters.account_type >>/<< parameters.region >>/<< parameters.environment >>
+examples:
+    drift_detection:
+        description: Dry-run drift-detection usage example
+        usage:
+            version: "2.1"
+            orbs:
+                tf-drift-detection: iiq/tf-drift-detection@1.0.1
+            workflows:
+                demo:
+                    jobs:
+                        - tf-drift-detection/drift_detection:
+                            account_id: "12345678912"
+                            account_type: dev
+                            context: any-context
+                            drift_email_from: your-ses@domain.com
+                            drift_email_to: your-receipient-dl@domain.com
+                            dry_run: true
+                            environment: dev
+                            name: terragrunt-plan-us-east-1-development
+                            region: us-east-1
+                            ses_region: us-east-2
+                            tg_queue_exclude_dirs: api-gateway
+
