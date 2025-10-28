@@ -13,5 +13,4 @@ echo "  drift_email_to:        << parameters.drift_email_to >>"
 echo "  drift_email_from:      << parameters.drift_email_from >>"
 echo "  drift_email_from_name: << parameters.drift_email_from_name >>"
 echo "  ses_region:            << parameters.ses_region >>"
-echo "  dry_run:               << parameters.dry_run >>"
 if [ -n "${SES_LOGIN:-}" ]; then echo "  SES_LOGIN:             [set]"; else echo "  SES_LOGIN:             [unset]"; fi
