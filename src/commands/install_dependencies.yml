@@ -1,0 +1,5 @@
+description: Install dependencies (bind-tools, jq, Python)
+steps:
+  - run:
+      name: Install dependencies
+      command: <<include(scripts/install_dependencies.sh)>>

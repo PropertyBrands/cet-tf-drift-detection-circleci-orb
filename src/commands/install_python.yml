@@ -1,5 +1,0 @@
-description: Install Python
-steps:
-  - run:
-      name: Install Python
-      command: <<include(scripts/install_misc.sh)>>

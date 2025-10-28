@@ -36,17 +36,39 @@ parameters:
     default: "Terraform Drift Detection"
   ses_region:
     type: string
+  auto_adopt_drift:
+    type: boolean
+    default: true
+  pre_approved_drift_file:
+    type: string
+    default: ""
 executor:
   name: terragrunt
   image: << parameters.terragrunt_image >>
 steps:
   - checkout
+  - install_sops
+  - install_dependencies
+  - create_python_heredoc
   - aws-cli/setup:
       role_arn: arn:aws:iam::<< parameters.account_id >>:role/<< parameters.role_name >>
       region: << parameters.region >>
-  - install_python
-  - install_sops
-  - install_misc
+  - when:
+      condition: << parameters.auto_adopt_drift >>
+      steps:
+        - run:
+            name: Attempt to automatically adopt drift into state based on list of approved changes
+            working_directory: << parameters.deployments_root >>/<< parameters.account_type >>/<< parameters.region >>/<< parameters.environment >>
+            environment:
+              TG_EXCLUDE_DIRS: << parameters.tg_queue_exclude_dirs >>
+              PRE_APPROVED_DRIFT_FILE: << parameters.pre_approved_drift_file >>
+            command: <<include(scripts/auto_adopt_drift.sh)>>
+  - unless:
+      condition: << parameters.auto_adopt_drift >>
+      steps:
+        - run:
+            name: Skip attempt to automatically adopt drift based on list of approved changes
+            command: echo "Skipping automatic drift adoption into state"
   - run:
       name: Run Terragrunt plan and email on drift (<< parameters.region >>/<< parameters.environment >>)
       working_directory: << parameters.deployments_root >>/<< parameters.account_type >>/<< parameters.region >>/<< parameters.environment >>

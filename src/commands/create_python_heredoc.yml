@@ -1,0 +1,7 @@
+description: Write out Python script into temporary location
+steps:
+  - run:
+      name: Write Python script to temporary location
+      command: <<include(scripts/write_validate_drift.sh)>>
+
+
