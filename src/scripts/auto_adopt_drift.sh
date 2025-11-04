@@ -40,7 +40,7 @@ printf "Processing following Terragrunt units: \n%s\n" "$(cat ${TG_UNIT_FILE})"
 
 # Run refresh on all units.
 set +e
-terragrunt run --all "${TF_RUN_QUEUE_EXCLUDE_DIRS[@]}" --out-dir "${TG_REFRESH_OUTDIR}" -- plan -refresh-only -detailed-exitcode
+terragrunt run --all --parallelism 1 --non-interactive "${TF_RUN_QUEUE_EXCLUDE_DIRS[@]}" --out-dir "${TG_REFRESH_OUTDIR}" -- plan -refresh-only -detailed-exitcode
 set -e
 
 # Copy all Terraform plan files into their respective Terragrunt unit directories and convert them to a JSON file.
