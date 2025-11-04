@@ -22,7 +22,7 @@ fi
 
 # Run tg plan and capture the exit code
 set +e
-terragrunt run --all --non-interactive "${EXTRA_ARGS[@]}" -- plan -detailed-exitcode
+terragrunt run --all --parallelism 1 --non-interactive "${EXTRA_ARGS[@]}" -- plan -detailed-exitcode
 TG_STATUS=$?
 set -e
 
