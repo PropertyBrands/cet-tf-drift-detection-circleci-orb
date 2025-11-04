@@ -39,6 +39,9 @@ parameters:
   auto_adopt_drift:
     type: boolean
     default: true
+  auto_adopt_drift_dry_run:
+    type: boolean
+    default: false
   pre_approved_drift_file:
     type: string
     default: ""
@@ -62,6 +65,7 @@ steps:
             environment:
               TG_EXCLUDE_DIRS: << parameters.tg_queue_exclude_dirs >>
               PRE_APPROVED_DRIFT_FILE: << parameters.pre_approved_drift_file >>
+              DRY_RUN: << parameters.auto_adopt_drift_dry_run >>
             command: <<include(scripts/auto_adopt_drift.sh)>>
   - unless:
       condition: << parameters.auto_adopt_drift >>
