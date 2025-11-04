@@ -116,7 +116,7 @@ def main():
     # Report results.
     if violations:
         print(
-            "\n❌ At least one drift change cannot be auto-adopated into Terraform state:",
+            "\n❌  At least one drift change cannot be auto-adopted into Terraform state:",
             file=sys.stderr,
         )
         print("", file=sys.stderr)
@@ -130,7 +130,7 @@ def main():
 
         sys.exit(1)
     else:
-        print("\n✅ All drift changes can be auto-adopated into Terraform state")
+        print("\n✅  All drift changes can be auto-adopted into Terraform state")
         print(f"Validated {len(drift_data)} drift objects")
 
         # Show what was validated.

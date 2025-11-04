@@ -102,10 +102,14 @@ while read -r unit; do
 
   # Auto-adopt drift if all changes are on the list of allowed changes.
   if [[ "${python_exit_code}" == "0" ]]; then
-    printf "\n\n==> Auto-remediating drift by running apply with refresh-only"
-    # terragrunt run --working-dir "${unit_dir}" -- apply -refresh-only
+    if [[ "${DRY_RUN:-}" == "1" ]]; then
+      printf "\n\n==> Dry run: Skipping auto-remediation of drift (dry-run mode enabled)\n"
+    else
+      printf "\n\n==> Auto-remediating drift by running apply with refresh-only\n"
+      terragrunt run --working-dir "${unit_dir}" -- apply -refresh-only -auto-approve
+    fi
   else
-    printf "\n\n==> Drift cannot be auto-remediated"
+    printf "\n\n==> Drift cannot be auto-remediated\n"
   fi
 
 done < "${TG_UNIT_FILE}"

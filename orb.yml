@@ -136,7 +136,7 @@ commands:
                         # Report results.
                         if violations:
                             print(
-                                "\n❌ At least one drift change cannot be auto-adopated into Terraform state:",
+                                "\n❌  At least one drift change cannot be auto-adopted into Terraform state:",
                                 file=sys.stderr,
                             )
                             print("", file=sys.stderr)
@@ -150,7 +150,7 @@ commands:
 
                             sys.exit(1)
                         else:
-                            print("\n✅ All drift changes can be auto-adopated into Terraform state")
+                            print("\n✅  All drift changes can be auto-adopted into Terraform state")
                             print(f"Validated {len(drift_data)} drift objects")
 
                             # Show what was validated.
@@ -216,6 +216,9 @@ jobs:
                 type: string
             auto_adopt_drift:
                 default: true
+                type: boolean
+            auto_adopt_drift_dry_run:
+                default: false
                 type: boolean
             deployments_root:
                 default: deployments
@@ -362,8 +365,12 @@ jobs:
 
                               # Auto-adopt drift if all changes are on the list of allowed changes.
                               if [[ "${python_exit_code}" == "0" ]]; then
-                                printf "\n\n==> Auto-remediating drift by running apply with refresh-only"
-                                # terragrunt run --working-dir "${unit_dir}" -- apply -refresh-only
+                                if [[ "${DRY_RUN:-}" == "1" ]]; then
+                                  printf "\n\n==> Dry run: Skipping auto-remediation of drift (dry-run mode enabled)"
+                                else
+                                  printf "\n\n==> Auto-remediating drift by running apply with refresh-only"
+                                  terragrunt run --working-dir "${unit_dir}" -- apply -refresh-only -auto-approve
+                                fi
                               else
                                 printf "\n\n==> Drift cannot be auto-remediated"
                               fi
@@ -371,6 +378,7 @@ jobs:
                             done < "${TG_UNIT_FILE}"
 
                         environment:
+                            DRY_RUN: << parameters.auto_adopt_drift_dry_run >>
                             PRE_APPROVED_DRIFT_FILE: << parameters.pre_approved_drift_file >>
                             TG_EXCLUDE_DIRS: << parameters.tg_queue_exclude_dirs >>
                         name: Attempt to automatically adopt drift into state based on list of approved changes
