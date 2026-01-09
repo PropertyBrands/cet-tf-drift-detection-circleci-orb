@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+DEFAULT_WD="${DEPLOYMENTS_ROOT}/${ACCOUNT_TYPE}/${REGION}/${ENVIRONMENT}"
+WD="${WORKING_DIR_OVERRIDE:-$DEFAULT_WD}"
+if [ ! -d "$WD" ]; then
+  echo "ERROR: working directory '$WD' does not exist" >&2
+  exit 66
+fi
+echo "Running drift detection in: $WD"
+cd "$WD"
+
 # Build exclude flag for run-all
 EXTRA_ARGS=()
 if [ -n "${TG_QUEUE_EXCLUDE_DIRS:-}" ]; then
