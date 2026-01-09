@@ -18,7 +18,7 @@ parameters:
   working_dir_override:
     description: "Optional absolute path to run from. Overrides the default path."
     type: string
-    default: ""    
+    default: ""
   role_name:
     type: string
   # Container image
