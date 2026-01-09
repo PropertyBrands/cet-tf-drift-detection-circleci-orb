@@ -3,5 +3,3 @@ steps:
   - run:
       name: Write Python script to temporary location
       command: <<include(scripts/write_validate_drift.sh)>>
-
-
