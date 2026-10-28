@@ -1,6 +1,3 @@
-Error checking for updates: failed to check for updates. `brew outdated --json=v2` returned an error: exit status 1
-Please contact support.
-
 version: 2.1
 description: |
     Terragrunt run-all plan with drift email via SES. Includes SOPS, CircleCI IP ranges, and flexible exclude-dir handling.
