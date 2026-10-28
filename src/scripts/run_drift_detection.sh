@@ -35,6 +35,32 @@ terragrunt run --all --parallelism 1 --non-interactive "${EXTRA_ARGS[@]}" -- pla
 TG_STATUS=$?
 set -e
 
+# Optional status POST. The file is read by a later step that still runs
+# when this step exits non-zero. Absent unless report_webhook is true.
+if [[ "${REPORT_WEBHOOK:-}" == "true" ]]; then
+  if [[ "$TG_STATUS" == "0" ]]; then
+    SUMMARY="No changes."
+  elif [[ "$TG_STATUS" == "2" ]]; then
+    SUMMARY="Drift detected."
+  else
+    SUMMARY="Plan failed (exit ${TG_STATUS})."
+  fi
+  jq -n \
+    --arg repo "${CIRCLE_PROJECT_USERNAME:-unknown}/${CIRCLE_PROJECT_REPONAME:-unknown}" \
+    --arg job "${CIRCLE_JOB:-unknown}" \
+    --arg region "${REGION}" \
+    --arg account_type "${ACCOUNT_TYPE}" \
+    --arg environment "${ENVIRONMENT}" \
+    --arg account_id "${ACCOUNT_ID}" \
+    --arg account_alias "${ALIAS}" \
+    --argjson exit_code "$TG_STATUS" \
+    --arg summary "$SUMMARY" \
+    --arg pipeline_url "${CIRCLE_BUILD_URL:-}" \
+    --arg commit_sha "${CIRCLE_SHA1:-}" \
+    '{repo:$repo, job:$job, region:$region, account_type:$account_type, environment:$environment, account_id:$account_id, account_alias:$account_alias, exit_code:$exit_code, summary:$summary, pipeline_url:$pipeline_url, commit_sha:$commit_sha}' \
+    > /tmp/drift-report.json
+fi
+
 # Helper to send a minimal SES email with jq
 send_mail() {
     subj="$1"

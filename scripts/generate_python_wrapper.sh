@@ -49,4 +49,3 @@ echo ""
 echo "Next steps:"
 echo "  1. Review the generated file if needed"
 echo "  2. Run: circleci orb pack src > orb.yml"
-

@@ -1,3 +1,6 @@
+Error checking for updates: failed to check for updates. `brew outdated --json=v2` returned an error: exit status 1
+Please contact support.
+
 version: 2.1
 description: |
     Terragrunt run-all plan with drift email via SES. Includes SOPS, CircleCI IP ranges, and flexible exclude-dir handling.
@@ -237,6 +240,10 @@ jobs:
                 type: string
             region:
                 type: string
+            report_webhook:
+                default: false
+                description: POST each plan result to DRIFT_WEBHOOK_URL. Off unless set.
+                type: boolean
             role_name:
                 type: string
             ses_region:
@@ -247,6 +254,10 @@ jobs:
             tg_queue_exclude_dirs:
                 default: ""
                 description: Comma-separated list of dirs to exclude from run-all
+                type: string
+            working_dir_override:
+                default: ""
+                description: Optional absolute path to run from. Overrides the default path.
                 type: string
         steps:
             - checkout
@@ -394,6 +405,15 @@ jobs:
                     #!/usr/bin/env bash
                     set -euo pipefail
 
+                    DEFAULT_WD="${DEPLOYMENTS_ROOT}/${ACCOUNT_TYPE}/${REGION}/${ENVIRONMENT}"
+                    WD="${WORKING_DIR_OVERRIDE:-$DEFAULT_WD}"
+                    if [ ! -d "$WD" ]; then
+                      echo "ERROR: working directory '$WD' does not exist" >&2
+                      exit 66
+                    fi
+                    echo "Running drift detection in: $WD"
+                    cd "$WD"
+
                     # Build exclude flag for run-all
                     EXTRA_ARGS=()
                     if [ -n "${TG_QUEUE_EXCLUDE_DIRS:-}" ]; then
@@ -418,6 +438,32 @@ jobs:
                     terragrunt run --all --parallelism 1 --non-interactive "${EXTRA_ARGS[@]}" -- plan -detailed-exitcode
                     TG_STATUS=$?
                     set -e
+
+                    # Optional status POST. The file is read by a later step that still runs
+                    # when this step exits non-zero. Absent unless report_webhook is true.
+                    if [[ "${REPORT_WEBHOOK:-}" == "true" ]]; then
+                      if [[ "$TG_STATUS" == "0" ]]; then
+                        SUMMARY="No changes."
+                      elif [[ "$TG_STATUS" == "2" ]]; then
+                        SUMMARY="Drift detected."
+                      else
+                        SUMMARY="Plan failed (exit ${TG_STATUS})."
+                      fi
+                      jq -n \
+                        --arg repo "${CIRCLE_PROJECT_USERNAME:-unknown}/${CIRCLE_PROJECT_REPONAME:-unknown}" \
+                        --arg job "${CIRCLE_JOB:-unknown}" \
+                        --arg region "${REGION}" \
+                        --arg account_type "${ACCOUNT_TYPE}" \
+                        --arg environment "${ENVIRONMENT}" \
+                        --arg account_id "${ACCOUNT_ID}" \
+                        --arg account_alias "${ALIAS}" \
+                        --argjson exit_code "$TG_STATUS" \
+                        --arg summary "$SUMMARY" \
+                        --arg pipeline_url "${CIRCLE_BUILD_URL:-}" \
+                        --arg commit_sha "${CIRCLE_SHA1:-}" \
+                        '{repo:$repo, job:$job, region:$region, account_type:$account_type, environment:$environment, account_id:$account_id, account_alias:$account_alias, exit_code:$exit_code, summary:$summary, pipeline_url:$pipeline_url, commit_sha:$commit_sha}' \
+                        > /tmp/drift-report.json
+                    fi
 
                     # Helper to send a minimal SES email with jq
                     send_mail() {
@@ -477,15 +523,89 @@ jobs:
                 environment:
                     ACCOUNT_ID: << parameters.account_id >>
                     ACCOUNT_TYPE: << parameters.account_type >>
+                    DEPLOYMENTS_ROOT: << parameters.deployments_root >>
                     DRIFT_EMAIL_FROM: << parameters.drift_email_from >>
                     DRIFT_EMAIL_FROM_NAME: << parameters.drift_email_from_name >>
                     DRIFT_EMAIL_TO: << parameters.drift_email_to >>
                     ENVIRONMENT: << parameters.environment >>
                     REGION: << parameters.region >>
+                    REPORT_WEBHOOK: << parameters.report_webhook >>
                     SES_REGION: << parameters.ses_region >>
                     TG_QUEUE_EXCLUDE_DIRS: << parameters.tg_queue_exclude_dirs >>
+                    WORKING_DIR_OVERRIDE: << parameters.working_dir_override >>
                 name: Run Terragrunt plan and email on drift (<< parameters.region >>/<< parameters.environment >>)
-                working_directory: << parameters.deployments_root >>/<< parameters.account_type >>/<< parameters.region >>/<< parameters.environment >>
+                working_directory: .
+            - run:
+                command: |
+                    #!/usr/bin/env bash
+                    # Optional status POST. Off unless the job sets report_webhook: true.
+                    # DRIFT_WEBHOOK_URL and DRIFT_WEBHOOK_TOKEN come from the job environment.
+                    set -uo pipefail
+
+                    if [[ "${REPORT_WEBHOOK:-}" != "true" ]]; then
+                      exit 0
+                    fi
+
+                    if [[ -z "${DRIFT_WEBHOOK_URL:-}" || -z "${DRIFT_WEBHOOK_TOKEN:-}" ]]; then
+                      echo "Drift webhook is not configured. Skipping."
+                      exit 0
+                    fi
+
+                    python3 - \<<'PY'
+                    import json
+                    import os
+                    import urllib.error
+                    import urllib.request
+
+                    url = os.environ["DRIFT_WEBHOOK_URL"]
+                    token = os.environ["DRIFT_WEBHOOK_TOKEN"]
+                    report = "/tmp/drift-report.json"
+
+                    if os.path.isfile(report):
+                        with open(report) as handle:
+                            payload = json.load(handle)
+                    else:
+                        payload = {
+                            "repo": "%s/%s" % (
+                                os.environ.get("CIRCLE_PROJECT_USERNAME", "unknown"),
+                                os.environ.get("CIRCLE_PROJECT_REPONAME", "unknown"),
+                            ),
+                            "job": os.environ.get("CIRCLE_JOB", "unknown"),
+                            "region": os.environ.get("REGION", ""),
+                            "account_type": os.environ.get("ACCOUNT_TYPE", ""),
+                            "environment": os.environ.get("ENVIRONMENT", ""),
+                            "account_id": os.environ.get("ACCOUNT_ID", ""),
+                            "account_alias": "",
+                            "exit_code": 1,
+                            "summary": "Job failed before the plan finished.",
+                            "pipeline_url": os.environ.get("CIRCLE_BUILD_URL", ""),
+                            "commit_sha": os.environ.get("CIRCLE_SHA1", ""),
+                        }
+
+                    body = json.dumps(payload).encode()
+                    request = urllib.request.Request(
+                        url,
+                        data=body,
+                        headers={
+                            "Authorization": "Bearer " + token,
+                            "Content-Type": "application/json",
+                        },
+                        method="POST",
+                    )
+                    try:
+                        with urllib.request.urlopen(request, timeout=20) as response:
+                            print("Drift status accepted for %s %s (%s)" % (payload["repo"], payload["job"], response.status))
+                    except urllib.error.URLError as exc:
+                        print("WARN: drift webhook failed: %s" % exc)
+                    PY
+                environment:
+                    ACCOUNT_ID: << parameters.account_id >>
+                    ACCOUNT_TYPE: << parameters.account_type >>
+                    ENVIRONMENT: << parameters.environment >>
+                    REGION: << parameters.region >>
+                    REPORT_WEBHOOK: << parameters.report_webhook >>
+                name: Post drift status
+                when: always
 examples:
     drift_detection:
         description: Dry-run drift-detection usage example
