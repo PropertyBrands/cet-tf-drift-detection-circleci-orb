@@ -108,17 +108,67 @@ commands:
                         return all(output_is_noise(name, change) for name, change in interesting)
 
 
-                    def check_output_noise(plan_path):
+                    def _resource_actions(change):
+                        body = change.get("change") if isinstance(change, dict) and "change" in change else change
+                        if not isinstance(body, dict):
+                            return []
+                        return body.get("actions") or []
+
+
+                    def plan_has_real_resource_changes(plan):
+                        for key in ("resource_changes", "resource_drift"):
+                            for change in plan.get(key) or []:
+                                actions = _resource_actions(change)
+                                if actions not in (["no-op"], ["read"], []):
+                                    return True
+                        return False
+
+
+                    def classify_saved_plan(plan):
+                        """catalog, clean, or drift. Catalog means only the EKS version outputs moved."""
+                        if plan_has_real_resource_changes(plan):
+                            return "drift"
+                        if plan_outputs_are_noise(plan):
+                            return "catalog"
+                        for change in (plan.get("output_changes") or {}).values():
+                            actions = (change or {}).get("actions") or []
+                            if actions not in (["no-op"], ["read"], []):
+                                return "drift"
+                        return "clean"
+
+
+                    def load_plan(plan_path):
                         try:
                             with open(plan_path, "r") as handle:
-                                plan = json.load(handle)
+                                return json.load(handle), None
                         except (OSError, json.JSONDecodeError) as exc:
-                            print(f"Error reading plan {plan_path}: {exc}", file=sys.stderr)
+                            return None, exc
+
+
+                    def check_output_noise(plan_path):
+                        plan, error = load_plan(plan_path)
+                        if error is not None:
+                            print(f"Error reading plan {plan_path}: {error}", file=sys.stderr)
                             return 1
-                        if not plan_outputs_are_noise(plan):
+                        if classify_saved_plan(plan) != "catalog":
                             return 1
                         print("Output changes are only the EKS version catalog. Safe to refresh into state.")
                         return 0
+
+
+                    def check_plan_class(plan_path):
+                        """Exit 0 catalog, 10 clean, 1 drift or unreadable."""
+                        plan, error = load_plan(plan_path)
+                        if error is not None:
+                            print(f"Error reading plan {plan_path}: {error}", file=sys.stderr)
+                            return 1
+                        kind = classify_saved_plan(plan)
+                        print(kind)
+                        if kind == "catalog":
+                            return 0
+                        if kind == "clean":
+                            return 10
+                        return 1
 
 
                     def main():
@@ -136,11 +186,18 @@ commands:
                             metavar="PLAN_JSON",
                             help="Exit 0 when a plan's only changes are EKS version-catalog outputs",
                         )
+                        parser.add_argument(
+                            "--plan-class",
+                            metavar="PLAN_JSON",
+                            help="Print catalog, clean, or drift. Exit 0, 10, or 1.",
+                        )
 
                         # Parse arguments.
                         args = parser.parse_args()
                         if args.output_noise:
                             sys.exit(check_output_noise(args.output_noise))
+                        if args.plan_class:
+                            sys.exit(check_plan_class(args.plan_class))
                         if not args.drift_file:
                             parser.error("drift_file is required")
                         drift_file = args.drift_file
@@ -359,6 +416,16 @@ jobs:
                             # @brief Refresh all Terragrunt units and auto-adopt pre-approved drift changes into Terraform state.
                             set -euo pipefail
 
+                            # Same directory the plan step uses. working_dir_override wins over the
+                            # account/region/environment path, which is empty for some repo layouts.
+                            DEFAULT_WD="${DEPLOYMENTS_ROOT}/${ACCOUNT_TYPE}/${REGION}/${ENVIRONMENT}"
+                            WD="${WORKING_DIR_OVERRIDE:-$DEFAULT_WD}"
+                            if [[ ! -d "$WD" ]]; then
+                              echo "ERROR: working directory '$WD' does not exist" >&2
+                              exit 66
+                            fi
+                            cd "$WD"
+
                             # Constants.
                             SCRIPT_PATH="${PWD}"
                             echo "SCRIPT_PATH: ${SCRIPT_PATH}"
@@ -487,11 +554,16 @@ jobs:
                             done < "${TG_UNIT_FILE}"
 
                         environment:
+                            ACCOUNT_TYPE: << parameters.account_type >>
+                            DEPLOYMENTS_ROOT: << parameters.deployments_root >>
                             DRY_RUN: << parameters.auto_adopt_drift_dry_run >>
+                            ENVIRONMENT: << parameters.environment >>
                             PRE_APPROVED_DRIFT_FILE: << parameters.pre_approved_drift_file >>
+                            REGION: << parameters.region >>
                             TG_EXCLUDE_DIRS: << parameters.tg_queue_exclude_dirs >>
+                            WORKING_DIR_OVERRIDE: << parameters.working_dir_override >>
                         name: Attempt to automatically adopt drift into state based on list of approved changes
-                        working_directory: << parameters.deployments_root >>/<< parameters.account_type >>/<< parameters.region >>/<< parameters.environment >>
+                        working_directory: .
             - unless:
                 condition: << parameters.auto_adopt_drift >>
                 steps:
@@ -531,16 +603,101 @@ jobs:
                       ALIAS="$ACCOUNT_ALIAS"
                     fi
 
+                    # Exit 2 is drift only when a saved plan changes a real resource or an output
+                    # outside the EKS version catalog. Catalog-only plans are refreshed into state.
+                    refresh_catalog_outputs() {
+                      local plans_file plan_file rel unit unit_dir json class show_status apply_status
+                      local saw_catalog=0
+                      local apply_failed=0
+                      plans_file="$(mktemp)"
+                      find "$PLAN_OUT" -type f -name 'tfplan.tfplan' | sort > "$plans_file"
+                      if [[ ! -s "$plans_file" ]]; then
+                        rm -f "$plans_file"
+                        echo "No saved plans to classify. Leaving the drift result unchanged."
+                        return 1
+                      fi
+                      local catalog_units=()
+                      while IFS= read -r plan_file; do
+                        rel="${plan_file#"$PLAN_OUT"/}"
+                        unit="${rel%/tfplan.tfplan}"
+                        unit_dir="${PWD}/${unit}"
+                        json="$(mktemp)"
+                        set +e
+                        terragrunt run --working-dir "$unit_dir" -- show -json "$plan_file" > "$json"
+                        show_status=$?
+                        set -e
+                        if [[ "$show_status" != "0" ]]; then
+                          rm -f "$json"
+                          rm -f "$plans_file"
+                          echo "Could not read plan for ${unit}. Leaving the drift result unchanged."
+                          return 1
+                        fi
+                        set +e
+                        python3 /tmp/validate_drift.py --plan-class "$json"
+                        class=$?
+                        set -e
+                        rm -f "$json"
+                        if [[ "$class" == "0" ]]; then
+                          saw_catalog=1
+                          catalog_units+=("$unit_dir")
+                        elif [[ "$class" == "10" ]]; then
+                          :
+                        else
+                          rm -f "$plans_file"
+                          return 1
+                        fi
+                      done < "$plans_file"
+                      rm -f "$plans_file"
+                      if [[ "$saw_catalog" != "1" ]]; then
+                        return 1
+                      fi
+                      case "${DRY_RUN:-}" in
+                        true|True|TRUE|1)
+                          echo "Dry run: EKS version-catalog outputs would be refreshed. Still reporting drift."
+                          return 1
+                          ;;
+                      esac
+                      for unit_dir in "${catalog_units[@]}"; do
+                        echo "Refreshing EKS version-catalog outputs into state: ${unit_dir}"
+                        set +e
+                        terragrunt run --working-dir "$unit_dir" -- apply -refresh-only -auto-approve
+                        apply_status=$?
+                        set -e
+                        if [[ "$apply_status" != "0" ]]; then
+                          apply_failed=1
+                        fi
+                      done
+                      [[ "$apply_failed" == "0" ]]
+                    }
+
                     # Run tg plan and capture the exit code
+                    PLAN_OUT="${TMPDIR:-/tmp}/drift-plans"
+                    rm -rf "$PLAN_OUT"
                     set +e
-                    terragrunt run --all --parallelism 1 --non-interactive "${EXTRA_ARGS[@]}" -- plan -detailed-exitcode
+                    terragrunt run --all --parallelism 1 --non-interactive "${EXTRA_ARGS[@]}" --out-dir "$PLAN_OUT" -- plan -detailed-exitcode
                     TG_STATUS=$?
                     set -e
 
+                    CATALOG_REFRESHED=
+                    if [[ "$TG_STATUS" == "2" ]]; then
+                      if refresh_catalog_outputs; then
+                        TG_STATUS=0
+                        CATALOG_REFRESHED=1
+                      fi
+                    fi
+
                     # Optional status POST. The file is read by a later step that still runs
                     # when this step exits non-zero. Absent unless report_webhook is true.
-                    if [[ "${REPORT_WEBHOOK:-}" == "true" ]]; then
-                      if [[ "$TG_STATUS" == "0" ]]; then
+                    # Set inside the script so a boolean parameter stays the string true.
+                    REPORT_WEBHOOK="\<< parameters.report_webhook >>"
+                    case "${REPORT_WEBHOOK:-}" in
+                      true|True|TRUE|1) REPORT_WEBHOOK=true ;;
+                      *) REPORT_WEBHOOK= ;;
+                    esac
+                    if [[ "${REPORT_WEBHOOK}" == "true" ]]; then
+                      if [[ "$CATALOG_REFRESHED" == "1" ]]; then
+                        SUMMARY="EKS version catalog refreshed into state."
+                      elif [[ "$TG_STATUS" == "0" ]]; then
                         SUMMARY="No changes."
                       elif [[ "$TG_STATUS" == "2" ]]; then
                         SUMMARY="Drift detected."
@@ -601,7 +758,11 @@ jobs:
                         exit 2
                         ;;
                       0)
-                        echo "No drift. Plan OK."
+                        if [[ "$CATALOG_REFRESHED" == "1" ]]; then
+                          echo "EKS version-catalog outputs were refreshed into state. Not reporting drift."
+                        else
+                          echo "No drift. Plan OK."
+                        fi
                         ;;
                       *)
                         SUBJECT="[TF] Terragrunt plan failed in ${ALIAS} account (environment: ${ENVIRONMENT})"
@@ -625,6 +786,7 @@ jobs:
                     DRIFT_EMAIL_FROM: << parameters.drift_email_from >>
                     DRIFT_EMAIL_FROM_NAME: << parameters.drift_email_from_name >>
                     DRIFT_EMAIL_TO: << parameters.drift_email_to >>
+                    DRY_RUN: << parameters.auto_adopt_drift_dry_run >>
                     ENVIRONMENT: << parameters.environment >>
                     REGION: << parameters.region >>
                     REPORT_WEBHOOK: << parameters.report_webhook >>
@@ -640,9 +802,13 @@ jobs:
                     # DRIFT_WEBHOOK_URL and DRIFT_WEBHOOK_TOKEN come from the job environment.
                     set -uo pipefail
 
-                    if [[ "${REPORT_WEBHOOK:-}" != "true" ]]; then
-                      exit 0
-                    fi
+                    # Set inside the script so a boolean parameter stays the string true.
+                    REPORT_WEBHOOK="\<< parameters.report_webhook >>"
+
+                    case "${REPORT_WEBHOOK:-}" in
+                      true|True|TRUE|1) ;;
+                      *) exit 0 ;;
+                    esac
 
                     if [[ -z "${DRIFT_WEBHOOK_URL:-}" || -z "${DRIFT_WEBHOOK_TOKEN:-}" ]]; then
                       echo "Drift webhook is not configured. Skipping."

@@ -29,16 +29,101 @@ else
   ALIAS="$ACCOUNT_ALIAS"
 fi
 
+# Exit 2 is drift only when a saved plan changes a real resource or an output
+# outside the EKS version catalog. Catalog-only plans are refreshed into state.
+refresh_catalog_outputs() {
+  local plans_file plan_file rel unit unit_dir json class show_status apply_status
+  local saw_catalog=0
+  local apply_failed=0
+  plans_file="$(mktemp)"
+  find "$PLAN_OUT" -type f -name 'tfplan.tfplan' | sort > "$plans_file"
+  if [[ ! -s "$plans_file" ]]; then
+    rm -f "$plans_file"
+    echo "No saved plans to classify. Leaving the drift result unchanged."
+    return 1
+  fi
+  local catalog_units=()
+  while IFS= read -r plan_file; do
+    rel="${plan_file#"$PLAN_OUT"/}"
+    unit="${rel%/tfplan.tfplan}"
+    unit_dir="${PWD}/${unit}"
+    json="$(mktemp)"
+    set +e
+    terragrunt run --working-dir "$unit_dir" -- show -json "$plan_file" > "$json"
+    show_status=$?
+    set -e
+    if [[ "$show_status" != "0" ]]; then
+      rm -f "$json"
+      rm -f "$plans_file"
+      echo "Could not read plan for ${unit}. Leaving the drift result unchanged."
+      return 1
+    fi
+    set +e
+    python3 /tmp/validate_drift.py --plan-class "$json"
+    class=$?
+    set -e
+    rm -f "$json"
+    if [[ "$class" == "0" ]]; then
+      saw_catalog=1
+      catalog_units+=("$unit_dir")
+    elif [[ "$class" == "10" ]]; then
+      :
+    else
+      rm -f "$plans_file"
+      return 1
+    fi
+  done < "$plans_file"
+  rm -f "$plans_file"
+  if [[ "$saw_catalog" != "1" ]]; then
+    return 1
+  fi
+  case "${DRY_RUN:-}" in
+    true|True|TRUE|1)
+      echo "Dry run: EKS version-catalog outputs would be refreshed. Still reporting drift."
+      return 1
+      ;;
+  esac
+  for unit_dir in "${catalog_units[@]}"; do
+    echo "Refreshing EKS version-catalog outputs into state: ${unit_dir}"
+    set +e
+    terragrunt run --working-dir "$unit_dir" -- apply -refresh-only -auto-approve
+    apply_status=$?
+    set -e
+    if [[ "$apply_status" != "0" ]]; then
+      apply_failed=1
+    fi
+  done
+  [[ "$apply_failed" == "0" ]]
+}
+
 # Run tg plan and capture the exit code
+PLAN_OUT="${TMPDIR:-/tmp}/drift-plans"
+rm -rf "$PLAN_OUT"
 set +e
-terragrunt run --all --parallelism 1 --non-interactive "${EXTRA_ARGS[@]}" -- plan -detailed-exitcode
+terragrunt run --all --parallelism 1 --non-interactive "${EXTRA_ARGS[@]}" --out-dir "$PLAN_OUT" -- plan -detailed-exitcode
 TG_STATUS=$?
 set -e
 
+CATALOG_REFRESHED=
+if [[ "$TG_STATUS" == "2" ]]; then
+  if refresh_catalog_outputs; then
+    TG_STATUS=0
+    CATALOG_REFRESHED=1
+  fi
+fi
+
 # Optional status POST. The file is read by a later step that still runs
 # when this step exits non-zero. Absent unless report_webhook is true.
-if [[ "${REPORT_WEBHOOK:-}" == "true" ]]; then
-  if [[ "$TG_STATUS" == "0" ]]; then
+# Set inside the script so a boolean parameter stays the string true.
+REPORT_WEBHOOK="<< parameters.report_webhook >>"
+case "${REPORT_WEBHOOK:-}" in
+  true|True|TRUE|1) REPORT_WEBHOOK=true ;;
+  *) REPORT_WEBHOOK= ;;
+esac
+if [[ "${REPORT_WEBHOOK}" == "true" ]]; then
+  if [[ "$CATALOG_REFRESHED" == "1" ]]; then
+    SUMMARY="EKS version catalog refreshed into state."
+  elif [[ "$TG_STATUS" == "0" ]]; then
     SUMMARY="No changes."
   elif [[ "$TG_STATUS" == "2" ]]; then
     SUMMARY="Drift detected."
@@ -99,7 +184,11 @@ case "$TG_STATUS" in
     exit 2
     ;;
   0)
-    echo "No drift. Plan OK."
+    if [[ "$CATALOG_REFRESHED" == "1" ]]; then
+      echo "EKS version-catalog outputs were refreshed into state. Not reporting drift."
+    else
+      echo "No drift. Plan OK."
+    fi
     ;;
   *)
     SUBJECT="[TF] Terragrunt plan failed in ${ALIAS} account (environment: ${ENVIRONMENT})"

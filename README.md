@@ -14,12 +14,14 @@ aws_eks_addon:modified_at
 aws_eks_access_policy_association:access_scope
 ```
 
-Output-only changes are not resource keys. The same step also refreshes an
-output into state when it is only the EKS version catalog:
+Output-only changes are not resource keys. The adopt step and the plan step
+both refresh an output into state when it is only the EKS version catalog:
 `cluster_platform_version`, or `cluster_version_data` limited to
 `default_platform_version`, `default_version`, and `kubernetes_patch_version`.
-A change to the cluster's own version is still drift. A custom allowlist
-replaces the resource keys above and does not replace these output rules.
+That plan exits 0 and does not send a drift email. A change to the cluster's
+own version is still drift. A custom allowlist replaces the resource keys
+above and does not replace these output rules. `working_dir_override` is the
+directory for both steps.
 
 This feature can be:
 * Disabled by setting the `auto_adopt_drift` parameter to a (boolean) false

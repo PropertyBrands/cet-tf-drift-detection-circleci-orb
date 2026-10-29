@@ -3,9 +3,13 @@
 # DRIFT_WEBHOOK_URL and DRIFT_WEBHOOK_TOKEN come from the job environment.
 set -uo pipefail
 
-if [[ "${REPORT_WEBHOOK:-}" != "true" ]]; then
-  exit 0
-fi
+# Set inside the script so a boolean parameter stays the string true.
+REPORT_WEBHOOK="<< parameters.report_webhook >>"
+
+case "${REPORT_WEBHOOK:-}" in
+  true|True|TRUE|1) ;;
+  *) exit 0 ;;
+esac
 
 if [[ -z "${DRIFT_WEBHOOK_URL:-}" || -z "${DRIFT_WEBHOOK_TOKEN:-}" ]]; then
   echo "Drift webhook is not configured. Skipping."
