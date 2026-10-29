@@ -2,6 +2,16 @@
 # @brief Refresh all Terragrunt units and auto-adopt pre-approved drift changes into Terraform state.
 set -euo pipefail
 
+# Same directory the plan step uses. working_dir_override wins over the
+# account/region/environment path, which is empty for some repo layouts.
+DEFAULT_WD="${DEPLOYMENTS_ROOT}/${ACCOUNT_TYPE}/${REGION}/${ENVIRONMENT}"
+WD="${WORKING_DIR_OVERRIDE:-$DEFAULT_WD}"
+if [[ ! -d "$WD" ]]; then
+  echo "ERROR: working directory '$WD' does not exist" >&2
+  exit 66
+fi
+cd "$WD"
+
 # Constants.
 SCRIPT_PATH="${PWD}"
 echo "SCRIPT_PATH: ${SCRIPT_PATH}"

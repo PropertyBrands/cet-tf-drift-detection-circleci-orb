@@ -69,8 +69,13 @@ steps:
       steps:
         - run:
             name: Attempt to automatically adopt drift into state based on list of approved changes
-            working_directory: << parameters.deployments_root >>/<< parameters.account_type >>/<< parameters.region >>/<< parameters.environment >>
+            working_directory: .
             environment:
+              DEPLOYMENTS_ROOT: << parameters.deployments_root >>
+              ACCOUNT_TYPE: << parameters.account_type >>
+              REGION: << parameters.region >>
+              ENVIRONMENT: << parameters.environment >>
+              WORKING_DIR_OVERRIDE: << parameters.working_dir_override >>
               TG_EXCLUDE_DIRS: << parameters.tg_queue_exclude_dirs >>
               PRE_APPROVED_DRIFT_FILE: << parameters.pre_approved_drift_file >>
               DRY_RUN: << parameters.auto_adopt_drift_dry_run >>
@@ -98,13 +103,14 @@ steps:
         SES_REGION: << parameters.ses_region >>
         DEPLOYMENTS_ROOT: << parameters.deployments_root >>
         WORKING_DIR_OVERRIDE: << parameters.working_dir_override >>
-        REPORT_WEBHOOK: << parameters.report_webhook >>
+        DRY_RUN: << parameters.auto_adopt_drift_dry_run >>
+        REPORT_WEBHOOK: "<< parameters.report_webhook >>"
       command: <<include(scripts/run_drift_detection.sh)>>
   - run:
       name: Post drift status
       when: always
       environment:
-        REPORT_WEBHOOK: << parameters.report_webhook >>
+        REPORT_WEBHOOK: "<< parameters.report_webhook >>"
         REGION: << parameters.region >>
         ENVIRONMENT: << parameters.environment >>
         ACCOUNT_TYPE: << parameters.account_type >>

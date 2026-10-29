@@ -94,17 +94,67 @@ def plan_outputs_are_noise(plan):
     return all(output_is_noise(name, change) for name, change in interesting)
 
 
-def check_output_noise(plan_path):
+def _resource_actions(change):
+    body = change.get("change") if isinstance(change, dict) and "change" in change else change
+    if not isinstance(body, dict):
+        return []
+    return body.get("actions") or []
+
+
+def plan_has_real_resource_changes(plan):
+    for key in ("resource_changes", "resource_drift"):
+        for change in plan.get(key) or []:
+            actions = _resource_actions(change)
+            if actions not in (["no-op"], ["read"], []):
+                return True
+    return False
+
+
+def classify_saved_plan(plan):
+    """catalog, clean, or drift. Catalog means only the EKS version outputs moved."""
+    if plan_has_real_resource_changes(plan):
+        return "drift"
+    if plan_outputs_are_noise(plan):
+        return "catalog"
+    for change in (plan.get("output_changes") or {}).values():
+        actions = (change or {}).get("actions") or []
+        if actions not in (["no-op"], ["read"], []):
+            return "drift"
+    return "clean"
+
+
+def load_plan(plan_path):
     try:
         with open(plan_path, "r") as handle:
-            plan = json.load(handle)
+            return json.load(handle), None
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"Error reading plan {plan_path}: {exc}", file=sys.stderr)
+        return None, exc
+
+
+def check_output_noise(plan_path):
+    plan, error = load_plan(plan_path)
+    if error is not None:
+        print(f"Error reading plan {plan_path}: {error}", file=sys.stderr)
         return 1
-    if not plan_outputs_are_noise(plan):
+    if classify_saved_plan(plan) != "catalog":
         return 1
     print("Output changes are only the EKS version catalog. Safe to refresh into state.")
     return 0
+
+
+def check_plan_class(plan_path):
+    """Exit 0 catalog, 10 clean, 1 drift or unreadable."""
+    plan, error = load_plan(plan_path)
+    if error is not None:
+        print(f"Error reading plan {plan_path}: {error}", file=sys.stderr)
+        return 1
+    kind = classify_saved_plan(plan)
+    print(kind)
+    if kind == "catalog":
+        return 0
+    if kind == "clean":
+        return 10
+    return 1
 
 
 def main():
@@ -122,11 +172,18 @@ def main():
         metavar="PLAN_JSON",
         help="Exit 0 when a plan's only changes are EKS version-catalog outputs",
     )
+    parser.add_argument(
+        "--plan-class",
+        metavar="PLAN_JSON",
+        help="Print catalog, clean, or drift. Exit 0, 10, or 1.",
+    )
 
     # Parse arguments.
     args = parser.parse_args()
     if args.output_noise:
         sys.exit(check_output_noise(args.output_noise))
+    if args.plan_class:
+        sys.exit(check_plan_class(args.plan_class))
     if not args.drift_file:
         parser.error("drift_file is required")
     drift_file = args.drift_file
