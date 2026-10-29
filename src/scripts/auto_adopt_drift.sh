@@ -70,7 +70,22 @@ while read -r unit; do
   # Check if any drift changes were found, otherwise skip to next unit.
   has_drift_changes=$(jq 'has("resource_drift")' "${refresh_file_json}")
   if [[ "$has_drift_changes" == "false" ]]; then
-    echo "No drift changes found, skipping to next Terragrunt unit"
+    # No resource drift. Still adopt a plan that only moved the EKS version
+    # catalog outputs, so the following plan is not reported as drift.
+    set +e
+    python3 /tmp/validate_drift.py --output-noise "${refresh_file_json}"
+    output_exit="$?"
+    set -e
+    if [[ "${output_exit}" == "0" ]]; then
+      if [[ "${DRY_RUN:-}" == "1" ]]; then
+        printf "\n\n==> Dry run: Skipping refresh of EKS version-catalog outputs\n"
+      else
+        printf "\n\n==> Refreshing EKS version-catalog outputs into state\n"
+        terragrunt run --working-dir "${unit_dir}" -- apply -refresh-only -auto-approve
+      fi
+    else
+      echo "No drift changes found, skipping to next Terragrunt unit"
+    fi
     continue
   fi
 
