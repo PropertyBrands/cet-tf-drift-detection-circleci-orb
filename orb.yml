@@ -381,9 +381,12 @@ jobs:
             region:
                 type: string
             report_webhook:
-                default: false
-                description: POST each plan result to DRIFT_WEBHOOK_URL. Off unless set.
-                type: boolean
+                default: disabled
+                description: POST each plan result to DRIFT_WEBHOOK_URL. enabled or disabled.
+                enum:
+                    - enabled
+                    - disabled
+                type: enum
             role_name:
                 type: string
             ses_region:
@@ -687,14 +690,8 @@ jobs:
                     fi
 
                     # Optional status POST. The file is read by a later step that still runs
-                    # when this step exits non-zero. Absent unless report_webhook is true.
-                    # Set inside the script so a boolean parameter stays the string true.
-                    REPORT_WEBHOOK="\<< parameters.report_webhook >>"
-                    case "${REPORT_WEBHOOK:-}" in
-                      true|True|TRUE|1) REPORT_WEBHOOK=true ;;
-                      *) REPORT_WEBHOOK= ;;
-                    esac
-                    if [[ "${REPORT_WEBHOOK}" == "true" ]]; then
+                    # when this step exits non-zero. Absent unless report_webhook is enabled.
+                    if [[ "${REPORT_WEBHOOK:-}" == "enabled" ]]; then
                       if [[ "$CATALOG_REFRESHED" == "1" ]]; then
                         SUMMARY="EKS version catalog refreshed into state."
                       elif [[ "$TG_STATUS" == "0" ]]; then
@@ -798,17 +795,14 @@ jobs:
             - run:
                 command: |
                     #!/usr/bin/env bash
-                    # Optional status POST. Off unless the job sets report_webhook: true.
+                    # Optional status POST. Off unless the job sets report_webhook: enabled.
                     # DRIFT_WEBHOOK_URL and DRIFT_WEBHOOK_TOKEN come from the job environment.
                     set -uo pipefail
 
-                    # Set inside the script so a boolean parameter stays the string true.
-                    REPORT_WEBHOOK="\<< parameters.report_webhook >>"
-
-                    case "${REPORT_WEBHOOK:-}" in
-                      true|True|TRUE|1) ;;
-                      *) exit 0 ;;
-                    esac
+                    if [[ "${REPORT_WEBHOOK:-}" != "enabled" ]]; then
+                      echo "Drift webhook is off (${REPORT_WEBHOOK:-unset})."
+                      exit 0
+                    fi
 
                     if [[ -z "${DRIFT_WEBHOOK_URL:-}" || -z "${DRIFT_WEBHOOK_TOKEN:-}" ]]; then
                       echo "Drift webhook is not configured. Skipping."

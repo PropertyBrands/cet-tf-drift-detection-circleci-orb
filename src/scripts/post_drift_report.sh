@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Optional status POST. Off unless the job sets report_webhook: true.
+# Optional status POST. Off unless the job sets report_webhook: enabled.
 # DRIFT_WEBHOOK_URL and DRIFT_WEBHOOK_TOKEN come from the job environment.
 set -uo pipefail
 
-# Set inside the script so a boolean parameter stays the string true.
-REPORT_WEBHOOK="<< parameters.report_webhook >>"
-
-case "${REPORT_WEBHOOK:-}" in
-  true|True|TRUE|1) ;;
-  *) exit 0 ;;
-esac
+if [[ "${REPORT_WEBHOOK:-}" != "enabled" ]]; then
+  echo "Drift webhook is off (${REPORT_WEBHOOK:-unset})."
+  exit 0
+fi
 
 if [[ -z "${DRIFT_WEBHOOK_URL:-}" || -z "${DRIFT_WEBHOOK_TOKEN:-}" ]]; then
   echo "Drift webhook is not configured. Skipping."

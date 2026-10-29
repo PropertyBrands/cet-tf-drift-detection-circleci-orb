@@ -113,14 +113,8 @@ if [[ "$TG_STATUS" == "2" ]]; then
 fi
 
 # Optional status POST. The file is read by a later step that still runs
-# when this step exits non-zero. Absent unless report_webhook is true.
-# Set inside the script so a boolean parameter stays the string true.
-REPORT_WEBHOOK="<< parameters.report_webhook >>"
-case "${REPORT_WEBHOOK:-}" in
-  true|True|TRUE|1) REPORT_WEBHOOK=true ;;
-  *) REPORT_WEBHOOK= ;;
-esac
-if [[ "${REPORT_WEBHOOK}" == "true" ]]; then
+# when this step exits non-zero. Absent unless report_webhook is enabled.
+if [[ "${REPORT_WEBHOOK:-}" == "enabled" ]]; then
   if [[ "$CATALOG_REFRESHED" == "1" ]]; then
     SUMMARY="EKS version catalog refreshed into state."
   elif [[ "$TG_STATUS" == "0" ]]; then

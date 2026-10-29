@@ -50,9 +50,10 @@ parameters:
     type: string
     default: ""
   report_webhook:
-    description: "POST each plan result to DRIFT_WEBHOOK_URL. Off unless set."
-    type: boolean
-    default: false
+    description: "POST each plan result to DRIFT_WEBHOOK_URL. enabled or disabled."
+    type: enum
+    enum: ["enabled", "disabled"]
+    default: "disabled"
 executor:
   name: terragrunt
   image: << parameters.terragrunt_image >>
@@ -104,13 +105,13 @@ steps:
         DEPLOYMENTS_ROOT: << parameters.deployments_root >>
         WORKING_DIR_OVERRIDE: << parameters.working_dir_override >>
         DRY_RUN: << parameters.auto_adopt_drift_dry_run >>
-        REPORT_WEBHOOK: "<< parameters.report_webhook >>"
+        REPORT_WEBHOOK: << parameters.report_webhook >>
       command: <<include(scripts/run_drift_detection.sh)>>
   - run:
       name: Post drift status
       when: always
       environment:
-        REPORT_WEBHOOK: "<< parameters.report_webhook >>"
+        REPORT_WEBHOOK: << parameters.report_webhook >>
         REGION: << parameters.region >>
         ENVIRONMENT: << parameters.environment >>
         ACCOUNT_TYPE: << parameters.account_type >>
